@@ -111,6 +111,14 @@ directories:
 
 ---
 
+## Live Demo
+
+**[https://colonypicker.onrender.com](https://colonypicker.onrender.com)**
+
+> Hosted on Render. The app may take ~30 seconds to wake up on first load.
+
+---
+
 ## Installation
 
 ### Option A — Docker (recommended)
@@ -143,16 +151,15 @@ pip install -r requirements.txt
 
 ## Running the App
 
+**Locally (after Option B install):**
 ```bash
 streamlit run app/main.py
 ```
+Opens at `http://localhost:8501`.
 
-The app opens in your browser at `https://colonypicker.onrender.com`.
-
-To share on a local network:
-
+**On Render (or any server):**
 ```bash
-streamlit run app/main.py --server.address 0.0.0.0
+streamlit run app/main.py --server.port $PORT --server.address 0.0.0.0
 ```
 
 ---

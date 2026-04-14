@@ -9,9 +9,7 @@ __pycache__/
 # OS-specific files
 .DS_Store
 
-# IDE and editor directories
-.vscode/
-.idea/
 
-# Output directories
-AMR_Genomics_KP_Results/
+# Large data directories — not tracked in git
+data/plate_images/
+data/iris_measurements/

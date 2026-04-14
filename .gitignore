@@ -11,5 +11,4 @@ __pycache__/
 
 
 # Large data directories — not tracked in git
-data/plate_images/
-data/iris_measurements/
+data/plate_images_original/

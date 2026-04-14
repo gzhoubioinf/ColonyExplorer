@@ -1,0 +1,14 @@
+files:
+  strain_file: "data/strain_names.csv"
+  kleborate_file: "data/kleborate_all.tsv"
+
+directories:
+  image_directory: "data/plate_images/"
+  iris_directory: "data/iris_measurements/"
+  gwas_directory: "data/GWAS_results/"
+  gwas_files_directory: "data/GWAS_files/"
+
+snp_gwas:
+  significant_snps_file: "data/GWAS_files/Significant_SNPs.csv"
+  presence_absence_file: "data/GWAS_files/significant_snps_presence_absence.csv"
+  annotated_snp_file: "data/GWAS_files/annotated_SNP.csv"

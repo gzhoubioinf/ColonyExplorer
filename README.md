@@ -113,11 +113,22 @@ directories:
 
 ## Installation
 
+### Option A — Docker (recommended)
+
+```bash
+docker pull gzhoubioinf09/colonyexplorer:latest
+docker run -p 8501:8501 gzhoubioinf09/colonyexplorer:latest
+```
+
+Open `http://localhost:8501` in your browser.
+
+### Option B — Local install
+
 **Requirements:** Python 3.11+
 
 ```bash
-git clone https://gitlab.com/gzhoubioinf-group/gzhoubioinf-project.git
-cd gzhoubioinf-project
+git clone https://github.com/gzhoubioinf/ColonyExplorer.git
+cd ColonyExplorer
 
 # Create virtual environment
 python3.11 -m venv venv
@@ -136,9 +147,9 @@ pip install -r requirements.txt
 streamlit run app/main.py
 ```
 
-The app opens in your browser at `http://localhost:8501`.
+The app opens in your browser at `https://colonypicker.onrender.com`.
 
-To share on a local network (e.g. lab meeting):
+To share on a local network:
 
 ```bash
 streamlit run app/main.py --server.address 0.0.0.0

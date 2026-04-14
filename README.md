@@ -26,7 +26,6 @@ ColonyExplorer is an interactive Streamlit application for high-throughput chemi
 
 ## Features
 
-![Key Features](app/assets/keyfeatures.png)
 
 | Feature | Description |
 | --- | --- |

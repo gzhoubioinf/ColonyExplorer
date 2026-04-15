@@ -113,7 +113,7 @@ directories:
 
 ## Live Demo
 
-**[https://colonypicker.onrender.com](https://colonypicker.onrender.com)**
+**[https://colonyexplorer.onrender.com](https://colonyexplorer.onrender.com)**
 
 > Hosted on Render. The app may take ~30 seconds to wake up on first load.
 

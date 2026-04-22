@@ -146,7 +146,7 @@ def render_home():
                 Inspect plate images, colony morphology, fitness distribution,
                 and full genomic profiles for any isolate.</div>
         </div>""")
-        if st.button("Open Colony Viewer →", key="home_cv", use_container_width=True):
+        if st.button("Open Colony Viewer →", key="home_cv", use_container_width=True, type="primary"):
             st.session_state.page = "Colony Viewer"
             st.rerun()
     with _q2:
@@ -159,7 +159,7 @@ def render_home():
                 Explore pan-genome associations between gene presence/absence
                 and fitness across 214 conditions.</div>
         </div>""")
-        if st.button("Open Gen-GWAS Explorer →", key="home_gwas", use_container_width=True):
+        if st.button("Open Gen-GWAS Explorer →", key="home_gwas", use_container_width=True, type="primary"):
             st.session_state.page = "Gen-GWAS Explorer"
             st.rerun()
     with _q3:
@@ -172,7 +172,7 @@ def render_home():
                 Browse SNP associations across conditions with allele distributions,
                 annotations, and isolate presence.</div>
         </div>""")
-        if st.button("Open SNP-GWAS Explorer →", key="home_snp", use_container_width=True):
+        if st.button("Open SNP-GWAS Explorer →", key="home_snp", use_container_width=True, type="primary"):
             st.session_state.page = "SNP-GWAS Explorer"
             st.rerun()
 
@@ -504,12 +504,11 @@ _STRAIN_COLS = ["ID", "GenBank_acc", "ENA_acc"]  # columns to join from strain_n
 
 
 def _format_isolate_label(row: pd.Series) -> str:
-    """Return 'SampleName (GenBankAcc)' or 'SampleName (NA)' if accession is missing."""
+    """Return GenBank accession, or 'NA' if missing."""
     acc = row.get("GenBank_acc", None)
-    name = row.get("Isolate", "")
     if pd.notna(acc) and str(acc).strip():
-        return f"{name} ({acc})"
-    return f"{name} (NA)"
+        return str(acc)
+    return "NA"
 
 
 @st.cache_data
@@ -997,8 +996,10 @@ def render_gwas_explorer(config: dict) -> None:
                 presence.loc[err_mask, "ENA_acc"] = presence.loc[err_mask, "Isolate"]
                 presence = presence.drop(columns=["ID"], errors="ignore")
                 presence.insert(0, "ID", presence.apply(_format_isolate_label, axis=1))
+                presence = presence[presence["ID"] != "NA"].reset_index(drop=True)
+                presence = presence.drop(columns=["Isolate", "GenBank_acc"], errors="ignore")
 
-            iso_search = st.text_input("Filter isolates", placeholder="e.g. DKPB001")
+            iso_search = st.text_input("Filter isolates", placeholder="e.g. SAMN39649348")
             shown = presence.reset_index(drop=True)
             if iso_search:
                 shown = presence[
@@ -1029,14 +1030,9 @@ def render_gwas_explorer(config: dict) -> None:
                 st.caption("👆 Select a row to inspect the isolate in Colony Viewer.")
             else:
                 iso_row = shown.iloc[pres_selected_rows[0]]
-                iso_isolate = iso_row.get("Isolate", None)
-                has_acc = "GenBank_acc" in shown.columns
-                selected_acc = iso_row.get("GenBank_acc", None) if has_acc else iso_isolate
+                selected_acc = iso_row.get("ID", None)
 
-                label = f"{iso_isolate}"
-                if has_acc and pd.notna(selected_acc):
-                    label += f"  ({selected_acc})"
-                st.info(f"Selected: **{label}**")
+                st.info(f"Selected: **{selected_acc}**")
 
                 if st.button("View in Colony Viewer →", key="jump_btn", type="primary"):
                     img_dir = config["directories"]["image_directory"]
@@ -1058,14 +1054,6 @@ def render_gwas_explorer(config: dict) -> None:
                             hit = strains[strains["GenBank_acc"] == selected_acc]
                             if not hit.empty:
                                 plate_num = int(hit.iloc[0]["Plate"])
-                        else:
-                            strains = pd.read_csv(strain_file, usecols=["ID", "Row", "Column", "Plate"])
-                            hit = strains[strains["ID"] == iso_isolate]
-                            if not hit.empty:
-                                plate_num = int(hit.iloc[0]["Plate"])
-                                st.session_state.grid_row = int(hit.iloc[0]["Row"])
-                                st.session_state.grid_col = int(hit.iloc[0]["Column"])
-
                     if plate_num is not None:
                         # Find a run for the correct plate, trying the current condition first
                         matching = []
@@ -1082,7 +1070,7 @@ def render_gwas_explorer(config: dict) -> None:
                             st.session_state.condition = cv_condition
 
                     st.session_state.strain_plate_num  = plate_num
-                    st.session_state.active_strain_id  = str(iso_isolate) if iso_isolate else None
+                    st.session_state.active_strain_id  = None
                     st.session_state.active_strain     = selected_acc if pd.notna(selected_acc) else None
                     st.session_state.lookup_mode       = "Search by accession number"
                     st.session_state.gwas_back = {
@@ -1454,10 +1442,12 @@ def render_snp_gwas_explorer(config: dict) -> None:
         presence_table.loc[err_mask, "ENA_acc"] = presence_table.loc[err_mask, "Isolate"]
         presence_table = presence_table.drop(columns=["ID"], errors="ignore")
         presence_table.insert(0, "ID", presence_table.apply(_format_isolate_label, axis=1))
+        presence_table = presence_table[presence_table["ID"] != "NA"].reset_index(drop=True)
+        presence_table = presence_table.drop(columns=["Isolate", "GenBank_acc"], errors="ignore")
     else:
         pass
 
-    iso_search = st.text_input("Filter isolates", placeholder="e.g. DKPB001", key="snp_iso_search")
+    iso_search = st.text_input("Filter isolates", placeholder="e.g. SAMN39649348", key="snp_iso_search")
     shown = presence_table.reset_index(drop=True)
     if iso_search:
         shown = presence_table[
@@ -1489,14 +1479,9 @@ def render_snp_gwas_explorer(config: dict) -> None:
         st.caption("👆 Select a row to inspect the isolate in Colony Viewer.")
     else:
         iso_row = shown.iloc[pres_selected_rows[0]]
-        iso_isolate = iso_row.get("Isolate", None)
-        has_acc = "GenBank_acc" in shown.columns
-        selected_acc = iso_row.get("GenBank_acc", None) if has_acc else iso_isolate
+        selected_acc = iso_row.get("ID", None)
 
-        label = f"{iso_isolate}"
-        if has_acc and pd.notna(selected_acc):
-            label += f"  ({selected_acc})"
-        st.info(f"Selected: **{label}**")
+        st.info(f"Selected: **{selected_acc}**")
 
         if st.button("View in Colony Viewer →", key="snp_jump_btn", type="primary"):
             img_dir = config["directories"]["image_directory"]
@@ -1514,14 +1499,6 @@ def render_snp_gwas_explorer(config: dict) -> None:
                     hit = strains[strains["GenBank_acc"] == selected_acc]
                     if not hit.empty:
                         plate_num = int(hit.iloc[0]["Plate"])
-                else:
-                    strains = pd.read_csv(strain_file, usecols=["ID", "Row", "Column", "Plate"])
-                    hit = strains[strains["ID"] == iso_isolate]
-                    if not hit.empty:
-                        plate_num = int(hit.iloc[0]["Plate"])
-                        st.session_state.grid_row = int(hit.iloc[0]["Row"])
-                        st.session_state.grid_col = int(hit.iloc[0]["Column"])
-
             if plate_num is not None:
                 matching = []
                 if cv_condition:
@@ -1539,7 +1516,7 @@ def render_snp_gwas_explorer(config: dict) -> None:
                     st.session_state.condition = cv_condition
 
             st.session_state.strain_plate_num  = plate_num
-            st.session_state.active_strain_id  = str(iso_isolate) if iso_isolate else None
+            st.session_state.active_strain_id  = None
             st.session_state.active_strain     = selected_acc if pd.notna(selected_acc) else None
             st.session_state.lookup_mode       = "Search by accession number"
             _snp_pos, _snp_ref, _snp_alt = _parse_snp_id(selected_snp)

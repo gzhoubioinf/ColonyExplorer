@@ -402,102 +402,59 @@ def run_colony_viewer(config: dict) -> None:
         st.radio("Lookup method", (_LOOKUP_BY_ID, _LOOKUP_BY_POS), key='lookup_mode',
                  horizontal=True)
 
-    # ── Row 2: sample + metrics + Analyse (inside form → atomic submit) ────────
-    # Wrapping only the sample selector and Analyse button in a form prevents the
-    # race condition where clicking Analyse mid-rerun commits a stale sample value.
+    # ── Row 2: sample selector (outside form → immediate position update) ───────
     cur_plate_num = st.session_state.plate_batch[0] if st.session_state.plate_batch else None
-    strain_plate = None
 
-    with st.form("cv_settings_form", border=False):
-        if st.session_state.lookup_mode == _LOOKUP_BY_ID:
-            plate_df = (
-                strain_map[strain_map['Plate'] == cur_plate_num]
-                if cur_plate_num is not None else strain_map
-            )
-            # Internal keys encode ID|acc_or_NA|row|col for guaranteed uniqueness.
-            # NA strains that share an ID with another NA strain get position shown.
-            _na_ids = plate_df[plate_df['GenBank_acc'].isna()]['ID'].value_counts()
-            _na_dup_ids = set(_na_ids[_na_ids > 1].index)
+    if st.session_state.lookup_mode == _LOOKUP_BY_ID:
+        plate_df = (
+            strain_map[strain_map['Plate'] == cur_plate_num]
+            if cur_plate_num is not None else strain_map
+        )
+        plate_df = plate_df[plate_df['GenBank_acc'].notna() & (plate_df['GenBank_acc'].astype(str).str.strip() != '')]
+        acc_list = plate_df['GenBank_acc'].tolist()
+        acc_to_row = {row['GenBank_acc']: row for _, row in strain_map[strain_map['GenBank_acc'].notna()].iterrows()}
 
-            plate_labels = [
-                f"{row['ID']}|{row['GenBank_acc'] if pd.notna(row.get('GenBank_acc')) else 'NA'}"
-                f"|{int(row['Row'])}|{int(row['Column'])}"
-                for _, row in plate_df.iterrows()
-            ]
+        _cur_acc = st.session_state.get('active_strain')
+        _default = _cur_acc if (_cur_acc in acc_list) else (acc_list[0] if acc_list else None)
 
-            def _display_label(lbl: str) -> str:
-                sid, acc, r, c = lbl.split("|")
-                if acc != 'NA':
-                    return f"{sid} ({acc})"
-                if sid in _na_dup_ids:
-                    return f"{sid} (NA, R{r}, C{c})"
-                return f"{sid} (NA)"
+        _force = (
+            st.session_state.get('pending_jump') or
+            '_sample_sel' not in st.session_state or
+            st.session_state.get('_sample_sel') not in acc_list
+        )
+        if _force and _default:
+            st.session_state['_sample_sel'] = _default
 
-            label_to_idx = {lbl: idx for idx, lbl in zip(plate_df.index, plate_labels)}
-            acc_to_label = {
-                row['GenBank_acc']: lbl
-                for (_, row), lbl in zip(plate_df.iterrows(), plate_labels)
-                if pd.notna(row.get('GenBank_acc'))
-            }
-            pos_to_label: dict[tuple[int, int], str] = {
-                (int(row['Row']), int(row['Column'])): lbl
-                for (_, row), lbl in zip(plate_df.iterrows(), plate_labels)
-            }
-
-            _cur_acc = st.session_state.get('active_strain')
-            _cur_row = st.session_state.get('grid_row', 1)
-            _cur_col = st.session_state.get('grid_col', 1)
-            if _cur_acc and pd.notna(_cur_acc) and _cur_acc in acc_to_label:
-                _target_label = acc_to_label[_cur_acc]
-            else:
-                _target_label = pos_to_label.get(
-                    (_cur_row, _cur_col),
-                    plate_labels[0] if plate_labels else None,
-                )
-
-            _force = (
-                st.session_state.get('pending_jump') or
-                '_sample_sel' not in st.session_state or
-                st.session_state.get('_sample_sel') not in plate_labels
-            )
-            if _force and _target_label and _target_label in plate_labels:
-                st.session_state['_sample_sel'] = _target_label
-
-            selected_label = st.selectbox(
-                "Sample (Strain ID / Accession)", plate_labels,
-                key='_sample_sel',
-                format_func=_display_label,
-            )
-            selected_row = strain_map.loc[label_to_idx[selected_label]] if selected_label in label_to_idx else None
-            if selected_row is not None:
-                selected_acc_val = selected_row.get('GenBank_acc') if isinstance(selected_row, pd.Series) else None
-                st.session_state.active_strain    = selected_acc_val if pd.notna(selected_acc_val) else None
-                st.session_state.active_strain_id = str(selected_row['ID']).strip()
-                st.session_state.grid_row         = int(selected_row['Row'])
-                st.session_state.grid_col         = int(selected_row['Column'])
-                strain_plate                      = int(selected_row['Plate'])
-                st.session_state.strain_plate_num = strain_plate
-            strain_plate = st.session_state.get('strain_plate_num')
+        selected_acc = st.selectbox("Accession Number", acc_list, key='_sample_sel')
+        selected_row = acc_to_row.get(selected_acc)
+        if selected_row is not None:
+            st.session_state.active_strain    = selected_acc
+            st.session_state.active_strain_id = str(selected_row['ID']).strip()
+            st.session_state.grid_row         = int(selected_row['Row'])
+            st.session_state.grid_col         = int(selected_row['Column'])
+            st.session_state.strain_plate_num = int(selected_row['Plate'])
             st.caption(
-                f"Position: ({st.session_state.grid_row}, {st.session_state.grid_col})"
-                f" · Plate {strain_plate}"
+                f"Position: ({selected_row['Row']}, {selected_row['Column']})"
+                f" · Plate {selected_row['Plate']}"
             )
-        else:
-            st.session_state.strain_plate_num = None
-            st.session_state.pop('_sample_sel', None)
-            _g1, _g2 = st.columns(2)
-            with _g1:
-                st.number_input("Row (1–32)",    min_value=1, max_value=32, step=1, key='grid_row')
-            with _g2:
-                st.number_input("Column (1–48)", min_value=1, max_value=48, step=1, key='grid_col')
-            match = strain_map[
-                (strain_map['Row'] == st.session_state.grid_row) &
-                (strain_map['Column'] == st.session_state.grid_col) &
-                (strain_map['Plate'] == cur_plate_num)
-            ] if cur_plate_num else pd.DataFrame()
-            label = match.iloc[0]['ID'] if not match.empty else "unknown"
-            st.caption(f"Strain: **{label}**")
+    else:
+        st.session_state.strain_plate_num = None
+        st.session_state.pop('_sample_sel', None)
+        _g1, _g2 = st.columns(2)
+        with _g1:
+            st.number_input("Row (1–32)",    min_value=1, max_value=32, step=1, key='grid_row')
+        with _g2:
+            st.number_input("Column (1–48)", min_value=1, max_value=48, step=1, key='grid_col')
+        match = strain_map[
+            (strain_map['Row'] == st.session_state.grid_row) &
+            (strain_map['Column'] == st.session_state.grid_col) &
+            (strain_map['Plate'] == cur_plate_num)
+        ] if cur_plate_num else pd.DataFrame()
+        label = match.iloc[0]['ID'] if not match.empty else "unknown"
+        st.caption(f"Strain: **{label}**")
 
+    # ── Metrics + Analyse button ─────────────────────────────────────────────
+    with st.form("cv_settings_form", border=False):
         st.multiselect("Metrics", options=ALL_METRICS, key='active_metrics')
         _form_submitted = st.form_submit_button("Analyse", type="primary")
 
@@ -719,7 +676,7 @@ def run_colony_viewer(config: dict) -> None:
             _fitness_df, _fitness_col, strain_id, res.get("ena_acc")
         )
         _cond_display = _clean_tags.get(_cond_key, st.session_state.condition or "")
-        _isolate_display = _strain_label or strain_id or "—"
+        _isolate_display = genbank_acc or _strain_label or "—"
 
         st.html('<div class="cv-section-title">Fitness Distribution</div>')
         if not _fitness_col:
@@ -760,8 +717,8 @@ def run_colony_viewer(config: dict) -> None:
                                    f"Fitness: {_strain_val:.3f}<br>"
                                    f"Percentile: {_pct:.0f}th<extra></extra>"),
                 ))
-            elif strain_id:
-                st.caption(f"No fitness data for **{strain_id}** in this condition.")
+            elif _isolate_display != "—":
+                st.caption(f"No fitness data for **{_isolate_display}** in this condition.")
 
             fig.update_layout(
                 title=dict(

@@ -19,7 +19,25 @@ def load_config(config_path="config/config.yaml"):
 _ACCENT       = "#0d9488"
 _ACCENT_BG    = "rgba(13,148,136,0.08)"
 _ACCENT_MID   = "rgba(13,148,136,0.18)"
-_FONT_IMPORT  = "@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');"
+_FONT_IMPORT  = """@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  src: url('/app/static/MaterialSymbolsOutlined.woff2') format('woff2');
+}
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-smoothing: antialiased;
+}"""
 
 _WORKFLOW_CSS = f"""
 <style>
@@ -552,8 +570,20 @@ def _isolate_presence_cached(gene: str, roary_path: str) -> pd.DataFrame:
 
 
 @st.cache_data
-def _load_gwas_csv(path: str) -> pd.DataFrame:
-    return pd.read_csv(path)
+@st.cache_data(show_spinner=False)
+def _load_pearson_r(tsv_path: str) -> pd.DataFrame:
+    if not os.path.exists(tsv_path):
+        return pd.DataFrame(columns=["Gene", "pearson_r"])
+    return pd.read_csv(tsv_path, sep="\t", usecols=["Gene", "pearson_r"])
+
+
+def _load_gwas_csv(path: str, pearson_tsv: str = "data/gene_pearson_r.tsv") -> pd.DataFrame:
+    df = pd.read_csv(path)
+    if "pearson_r" not in df.columns:
+        pr = _load_pearson_r(pearson_tsv)
+        if not pr.empty:
+            df = df.merge(pr, on="Gene", how="left")
+    return df
 
 
 @st.cache_data(show_spinner=False)
@@ -639,7 +669,7 @@ _GWAS_CSS = """
 
 
 def _style_gwas_table(df: pd.DataFrame) -> "pd.io.formats.style.Styler":
-    """Binary color for Odds Ratio (>1 green, <1 pink); gradient for p-values."""
+    """Binary color for Odds Ratio (>1 green, <1 pink); gradient for p-values; binary for Pearson r."""
     from matplotlib.colors import LinearSegmentedColormap
 
     def _or_color(val):
@@ -647,17 +677,26 @@ def _style_gwas_table(df: pd.DataFrame) -> "pd.io.formats.style.Styler":
             return ""
         return "background-color: #c5f0c5" if val > 1 else "background-color: #fac5c5"
 
+    def _pearson_color(val):
+        if pd.isna(val):
+            return ""
+        return "background-color: #e2d5f5" if val > 0.95 else "background-color: #fde8c5"
+
     cmap_pval = LinearSegmentedColormap.from_list("pval", ["#c5dff7", "#ffffff"])
-    return (
+    fmt = {
+        "Odds Ratio":   "{:.3f}",
+        "Bonferroni p": "{:.2e}",
+        "BH p":         "{:.2e}",
+    }
+    styler = (
         df.style
         .map(_or_color, subset=["Odds Ratio"])
         .background_gradient(subset=["Bonferroni p", "BH p"], cmap=cmap_pval, axis=None)
-        .format({
-            "Odds Ratio":   "{:.3f}",
-            "Bonferroni p": "{:.2e}",
-            "BH p":         "{:.2e}",
-        })
     )
+    if "Pearson r" in df.columns:
+        styler = styler.map(_pearson_color, subset=["Pearson r"])
+        fmt["Pearson r"] = "{:.3f}"
+    return styler.format(fmt, na_rep="")
 
 
 def render_gwas_explorer(config: dict) -> None:
@@ -726,6 +765,7 @@ def render_gwas_explorer(config: dict) -> None:
         with c2:
             search = st.text_input("Search gene / annotation", placeholder="e.g. tesA, transporter")
         show_robust_only = st.checkbox("Show robust associations only (filter lineage-biased hits)")
+        high_pearson_only = st.checkbox("Show only high-confidence gene calls (Pearson r > 0.95)")
 
     mask = df["Benjamini_H_p"] <= p_thresh
     if search:
@@ -742,7 +782,11 @@ def render_gwas_explorer(config: dict) -> None:
         filtered = filtered[filtered["Worst_pairwise_comp_p"] < 0.05]
         removed = original_count - len(filtered)
         st.caption(f"Showing {len(filtered)} robust associations. (Filtered out {removed} potential lineage-biased hits)")
-    else:
+
+    if high_pearson_only and "pearson_r" in filtered.columns:
+        filtered = filtered[filtered["pearson_r"] >= 0.95]
+
+    if not show_robust_only:
         st.write(f"**{len(filtered)}** significant associations (of {len(df)} total)")
 
     def _confidence(row):
@@ -755,12 +799,14 @@ def render_gwas_explorer(config: dict) -> None:
 
     filtered["Confidence"] = filtered.apply(_confidence, axis=1)
 
-    display = filtered[[
-        "Gene", "Annotation",
-        "Number_pos_present_in", "Number_neg_present_in",
-        "Odds_ratio", "Bonferroni_p", "Benjamini_H_p",
-        "Confidence",
-    ]].rename(columns={
+    base_cols = ["Gene", "Annotation",
+                 "Number_pos_present_in", "Number_neg_present_in",
+                 "Odds_ratio", "Bonferroni_p", "Benjamini_H_p",
+                 "Confidence"]
+    if "pearson_r" in filtered.columns:
+        base_cols.insert(2, "pearson_r")
+    display = filtered[base_cols].rename(columns={
+        "pearson_r":              "Pearson r",
         "Number_pos_present_in":  "n pos",
         "Number_neg_present_in":  "n neg",
         "Odds_ratio":             "Odds Ratio",
@@ -778,34 +824,52 @@ def render_gwas_explorer(config: dict) -> None:
     )
 
     st.html("""
-    <div style="display:flex; gap:2rem; align-items:flex-start; margin:0.4rem 0 0.8rem; flex-wrap:wrap;">
-        <div>
-            <div style="font-size:0.75rem; font-weight:600; opacity:0.6; margin-bottom:0.35rem; letter-spacing:0.05em; text-transform:uppercase;">Odds Ratio</div>
-            <div style="display:flex; align-items:center; gap:0.5rem;">
-                <div style="width:22px;height:14px;border-radius:3px;background:#fac5c5;"></div>
-                <span style="font-size:0.78rem;">OR &lt; 1 &nbsp;(depleted)</span>
-                <div style="width:22px;height:14px;border-radius:3px;background:#c5f0c5; margin-left:0.75rem;"></div>
-                <span style="font-size:0.78rem;">OR &gt; 1 &nbsp;(enriched)</span>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.75rem; margin:0.5rem 0 1rem;">
+
+        <div style="padding:0.65rem 0.9rem; border-radius:6px; background:rgba(0,0,0,0.03); border:1px solid rgba(0,0,0,0.07);">
+            <div style="font-size:0.7rem; font-weight:700; opacity:0.55; margin-bottom:0.4rem; letter-spacing:0.06em; text-transform:uppercase;">Odds Ratio</div>
+            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                <div style="width:18px;height:12px;border-radius:3px;background:#fac5c5;"></div>
+                <span style="font-size:0.78rem;">OR &lt; 1 &nbsp;(depleted in resistant)</span>
+                <div style="width:18px;height:12px;border-radius:3px;background:#c5f0c5; margin-left:0.5rem;"></div>
+                <span style="font-size:0.78rem;">OR &gt; 1 &nbsp;(enriched in resistant)</span>
             </div>
         </div>
-        <div>
-            <div style="font-size:0.75rem; font-weight:600; opacity:0.6; margin-bottom:0.35rem; letter-spacing:0.05em; text-transform:uppercase;">P-value (Bonferroni / BH)</div>
+
+        <div style="padding:0.65rem 0.9rem; border-radius:6px; background:rgba(0,0,0,0.03); border:1px solid rgba(0,0,0,0.07);">
+            <div style="font-size:0.7rem; font-weight:700; opacity:0.55; margin-bottom:0.4rem; letter-spacing:0.06em; text-transform:uppercase;">P-value (Bonferroni / BH)</div>
             <div style="display:flex; align-items:center; gap:0.5rem;">
-                <span style="font-size:0.78rem; white-space:nowrap;">p low &nbsp;(significant)</span>
-                <div style="width:90px; height:14px; border-radius:3px;
+                <span style="font-size:0.78rem; white-space:nowrap;">significant</span>
+                <div style="width:80px; height:12px; border-radius:3px;
                             background:linear-gradient(to right,#c5dff7,#ffffff);
                             border:1px solid rgba(0,0,0,0.1);"></div>
-                <span style="font-size:0.78rem; white-space:nowrap;">p high &nbsp;(not significant)</span>
+                <span style="font-size:0.78rem; white-space:nowrap;">not significant</span>
             </div>
         </div>
-        <div>
-            <div style="font-size:0.75rem; font-weight:600; opacity:0.6; margin-bottom:0.35rem; letter-spacing:0.05em; text-transform:uppercase;">Confidence</div>
-            <div style="display:flex; flex-direction:column; gap:0.25rem;">
+
+        <div style="padding:0.65rem 0.9rem; border-radius:6px; background:rgba(0,0,0,0.03); border:1px solid rgba(0,0,0,0.07);">
+            <div style="font-size:0.7rem; font-weight:700; opacity:0.55; margin-bottom:0.4rem; letter-spacing:0.06em; text-transform:uppercase;">Confidence</div>
+            <div style="display:flex; flex-direction:column; gap:0.2rem;">
                 <div style="font-size:0.78rem;">⭐⭐⭐ <b>Robust</b> — significant in all pairwise comparisons (Worst p &lt; 0.05)</div>
                 <div style="font-size:0.78rem;">⭐⭐ <b>Context-specific</b> — significant in at least one comparison (Best p &lt; 0.01)</div>
                 <div style="font-size:0.78rem;">⭐ <b>Low</b> — pairwise support does not meet either threshold</div>
             </div>
         </div>
+
+        <div style="padding:0.65rem 0.9rem; border-radius:6px; background:rgba(0,0,0,0.03); border:1px solid rgba(0,0,0,0.07);">
+            <div style="font-size:0.7rem; font-weight:700; opacity:0.55; margin-bottom:0.4rem; letter-spacing:0.06em; text-transform:uppercase;">Pearson r</div>
+            <div style="display:flex; flex-direction:column; gap:0.2rem;">
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <div style="width:18px;height:12px;border-radius:3px;background:#e2d5f5; flex-shrink:0;"></div>
+                    <span style="font-size:0.78rem;"><b>r &gt; 0.95</b> — High agreement between BLAST and Panaroo; gene presence/absence call is consistent</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                    <div style="width:18px;height:12px;border-radius:3px;background:#fde8c5; flex-shrink:0;"></div>
+                    <span style="font-size:0.78rem;"><b>r ≤ 0.95</b> — Discordance between methods; gene may require manual inspection for paralogy, fragmentation, or annotation issues</span>
+                </div>
+            </div>
+        </div>
+
     </div>
     """)
 
